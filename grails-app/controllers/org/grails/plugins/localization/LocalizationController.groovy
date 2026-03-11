@@ -1,7 +1,7 @@
 package org.grails.plugins.localization
 
 import grails.converters.JSON
-import grails.transaction.Transactional
+import grails.gorm.transactions.Transactional
 import org.springframework.context.i18n.LocaleContextHolder
 
 class LocalizationController {

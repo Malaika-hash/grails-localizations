@@ -8,8 +8,12 @@ import org.springframework.core.io.Resource
 import org.springframework.web.context.request.RequestContextHolder
 import org.springframework.web.context.support.WebApplicationContextUtils
 import org.springframework.web.servlet.support.RequestContextUtils
+import jakarta.servlet.ServletContext
+import grails.gorm.annotation.Entity // Use the GORM 7+ annotation
+import grails.persistence.Entity as PersistenceEntity
 
-
+@Entity
+@PersistenceEntity
 class Localization implements Serializable {
 
     private static cache = new LinkedHashMap((int) 16, (float) 0.75, (boolean) true)
@@ -38,7 +42,7 @@ class Localization implements Serializable {
         code(blank: false, size: 1..250)
         locale(size: 1..4, unique: 'code', blank: false, matches: "\\*|([a-z][a-z]([A-Z][A-Z])?)")
         relevance(validator: { val, obj ->
-            if (obj.locale) obj.relevance = obj.locale.length()
+            if (obj.locale) obj.relevance = (byte) obj.locale.length()
             return true
         })
         text(blank: true, size: 0..2000)
@@ -73,8 +77,8 @@ class Localization implements Serializable {
         if (!msg) {
             Localization.withNewSession {
                 def lst = Localization.findAll(
-                        "from org.grails.plugins.localization.Localization as x where x.code = ? and x.locale in ('*', ?, ?) order by x.relevance desc",
-                        [code, locale.getLanguage(), locale.getLanguage() + locale.getCountry()])
+                        "from org.grails.plugins.localization.Localization as x where x.code = :code and x.locale in ('*', :lang, :langCountry) order by x.relevance desc",
+                        [code: code, lang: locale.getLanguage(), langCountry: locale.getLanguage() + locale.getCountry()])
                 msg = lst.size() > 0 ? lst[0].text : missingValue
             }
 
@@ -176,7 +180,7 @@ class Localization implements Serializable {
 
     // Repopulates the org.grails.plugins.localization table from the i18n property files
     static reload() {
-        Localization.executeUpdate("delete Localization")
+        Localization.executeUpdate("delete from Localization")
         load()
         resetAll()
     }
@@ -203,7 +207,7 @@ class Localization implements Serializable {
             def locale = getLocaleForFileName(it.filename)
             Localization.loadPropertyFile(new InputStreamReader(it.inputStream, "UTF-8"), locale)
         }
-        def size = Holders.config.localizations.cache.size.kb
+        def size = Holders.config.getProperty('localizations.cache.size.kb', Integer)
         if (size != null && size instanceof Integer && size >= 0 && size <= 1024 * 1024) {
             maxCacheSize = size * 1024L
         }
@@ -221,7 +225,9 @@ class Localization implements Serializable {
 
         def rec, txt
         def counts = [imported: 0, skipped: 0]
-        Localization.withSession { session ->
+        // Grails 7 / Hibernate 5 requires an active transaction for write operations.
+        // Avoid manually flushing a session that isn't bound to the transaction.
+        Localization.withTransaction {
             props.stringPropertyNames().each { key ->
                 rec = Localization.findByCodeAndLocale(key, loc)
                 if (!rec) {
@@ -238,9 +244,8 @@ class Localization implements Serializable {
                 }
             }
             // Clear the whole cache if we actually imported any new keys
-            if (counts.imported > 0){
+            if (counts.imported > 0) {
                 Localization.resetAll()
-                session.flush()
             }
         }
         return counts
